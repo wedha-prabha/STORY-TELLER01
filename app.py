@@ -173,22 +173,23 @@ def save_to_faiss_and_sheet(story, title, theme, age, lines, language, audio_url
         st.error(f"❌ Failed to save to Google Sheets: {str(e)}")
         raise Exception(f"Google Sheets error: {str(e)}")
 
-def generate_story(prompt, retries=3):
-    """Generate story with fallback and retry logic"""
+def generate_story(prompt, retries=3, delay=60):
+    """Generate story with proper error handling and retry logic"""
     for attempt in range(retries):
         try:
             model = genai.GenerativeModel(model_name="gemini-1.5-pro")
             response = model.generate_content(prompt)
             return response.text.strip()
         except exceptions.ResourceExhausted as e:
-            if attempt == retries - 1:
-                st.error("📢 API quota exceeded. Please try again later or consider upgrading your API plan.")
-                return ("I apologize, but I've reached my story generation limit. "
-                       "Please try again in a few minutes or contact support.")
-            time.sleep(20)  
+            if attempt < retries - 1:
+                st.warning(f"API quota exceeded. Waiting {delay} seconds before retry {attempt + 1}/{retries}...")
+                time.sleep(delay)
+                continue
+            st.error("API quota exceeded. Please try again later.")
+            return None
         except Exception as e:
             st.error(f"Error generating story: {str(e)}")
-            return "Error generating story. Please try again."
+            return None
 
 def generate_audio(text, language):
     voice_id = LANGUAGE_VOICES.get(language, "en-US-SamanthaNeural")
@@ -238,66 +239,32 @@ age = st.text_input("👶 Age Group (e.g., 6-8 years)")
 lines = st.slider("✍️ Number of lines", 3, 20, 5)
 
 if st.button("🚀 Generate Story") and title:
-    sheet, data = load_google_sheet()
-    if sheet is None:
-        st.error("Unable to connect to Google Sheets. Story will be generated but not saved.")
-        # Continue with story generation without sheet operations
-    existing_story = check_existing_story(title)
+    story_prompt = (
+        f"You are a creative children's storyteller. Write a {lines}-line story in {language} "
+        f"titled '{title}' for the age group {age}. Theme: '{theme}'. "
+        f"Ensure the story is engaging, moral-based or educational, and completely safe for children."
+    )
     
-    if existing_story:
-        st.info("📄 Story already exists in RAG. Displaying saved version:")
-        st.write(existing_story)
-        st.download_button("⬇️ Download Story (Text)", existing_story, file_name=f"{title}.txt")
-    else:
-        story_prompt = (
-            f"You are a creative children's storyteller. Write a {lines}-line story in {language} titled '{title}' "
-            f"for the age group {age}. Theme: '{theme}'. Ensure the story is engaging, moral-based or educational, "
-            f"and completely safe for children."
-        )
+    generated_story = generate_story(story_prompt)
+    
+    if generated_story:
+        st.success("✅ Story saved successfully!")
+        edited_story = st.text_area("📝 Edit your story before saving:", 
+                                  value=generated_story, 
+                                  height=300)
         
-        generated_story = generate_story(story_prompt)
-        if generated_story:
-            st.session_state['current_story'] = generated_story
-            st.session_state['story_details'] = {
-                'title': title,
-                'theme': theme,
-                'age': age,
-                'lines': lines,
-                'language': language
-            }
-            
-            st.success("✅ Story generated successfully!")
-            edited_story = st.text_area("📝 Edit your story before saving:", 
-                                      value=generated_story, 
-                                      height=300,
-                                      key='story_editor')
-            
-            
-            st.write("🔊 Generating audio narration...")
-            audio_url = generate_audio(edited_story, language)
-            if audio_url:
-                st.audio(audio_url)
-                st.markdown(f"[⬇️ Download Audio]({audio_url})")
-            else:
-                st.warning("⚠️ Could not generate audio.")
-            
-          
-            if st.button("💾 Save Story"):
-                if save_story_to_sheet(
-                    edited_story,
-                    title,
-                    theme,
-                    age,
-                    lines,
-                    language,
-                    audio_url
-                ):
-                    st.success("✅ Story saved to Google Sheet successfully!")
-                    
-                    save_to_faiss_and_sheet(edited_story, title, theme, age, lines, language, audio_url)
-                    
-            st.download_button("⬇️ Download Story (Text)", 
-                             edited_story, 
-                             file_name=f"{title}.txt")
+        if st.button("💾 Save Story"):
+            try:
+                save_to_sheet(
+                    story=edited_story,
+                    title=title,
+                    theme=theme,
+                    age=age,
+                    lines=lines,
+                    language=language
+                )
+                st.success("✅ Story saved successfully!")
+            except Exception as e:
+                st.error(f"Failed to save story: {str(e)}")
 else:
     st.info("👆 Enter a title and click Generate Story.")
