@@ -11,6 +11,7 @@ import requests
 import time
 from google.auth.exceptions import TransportError
 from google.api_core import retry
+import json
 
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -75,6 +76,38 @@ def load_google_sheet(max_retries=3, delay=5):
                 st.error(f"Error details: {str(e)}")
                 # Return empty data instead of raising exception
                 return None, []
+
+def init_google_sheets():
+    """Initialize Google Sheets connection using Streamlit secrets"""
+    try:
+        # Load credentials from Streamlit secrets
+        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        
+        # Updated scope to use newer API endpoints
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        
+        # Initialize credentials and client
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        # Open sheet by ID instead of name for better reliability
+        sheet = client.open_by_key(st.secrets["GOOGLE_SHEET_ID"]).sheet1
+        
+        st.success("✅ Connected to Google Sheets successfully!")
+        return sheet
+        
+    except KeyError as e:
+        st.error(f"❌ Missing required secret: {e}")
+        return None
+    except json.JSONDecodeError:
+        st.error("❌ Invalid JSON in GOOGLE_CREDENTIALS secret")
+        return None
+    except Exception as e:
+        st.error(f"❌ Failed to connect to Google Sheets: {str(e)}")
+        return None
 
 def load_faiss_index():
     if os.path.exists(f"{FAISS_INDEX_PATH}/index.faiss") and os.path.exists(f"{FAISS_INDEX_PATH}/metadata.pkl"):
